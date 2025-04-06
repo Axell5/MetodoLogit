@@ -1,0 +1,178 @@
+---
+title: "Modelo Logit"
+author: "Axel Caro"
+output: word_document
+---
+
+# Carga de paquetes
+
+```{r}
+
+# install.packages("dyplr")
+# install.packages("caret")
+# install.packages("haven")
+# install.packages("ROSE")
+# install.packages("imbalance")  # Balanceo de Datos
+# install.packages("smotefamily")
+# install.packages("lattice")
+
+library(dplyr)
+library(caret)
+library(haven)
+library(ROSE)
+library(imbalance)
+library(smotefamily)
+library(lattice)
+
+```
+
+# Carga de la base de datos
+
+```{r}
+
+library(haven)
+TOTAL_NACIONAL_ANUAL_2021 <- read_dta("C:/Users/sala203/Downloads/TOTAL_NACIONAL_ANUAL_2021/TOTAL_NACIONAL_ANUAL_2021.dta")
+
+```
+
+# Crear replica de base original para editar
+
+```{r}
+
+Base <- TOTAL_NACIONAL_ANUAL_2021
+y <- Base$p6920 # Cotización a pensiones
+x_1 <- Base$p6020 # Sexo
+x_2 <- Base$p6040 # Edad
+x_3 <- Base$p6220 # Nivel Educativo
+x_4 <- Base$esc # Nivel de escolaridad
+x_5 <- Base$p4030s1a1 # Estrato
+x_6 <- Base$p6050 # Si es o no el jefe de hogar
+
+# Crear un nueva base con las variables seleccionadas y se eliminarán los NA (Faltantes)
+
+Base1 <- data.frame(y, x_1, x_2, x_3, x_4, x_5, x_6)
+Base2 <- na.omit(Base1) # Elimina todos los individuos que no tengan las 7 variables con la informacion completa
+BaseF <- Base2
+
+```
+
+```{r}
+
+# Convertir variables en factores y eliminar valores que sobren en la pregunta. Por ejemplo, 99 puede significar que la persona no respondió.
+
+# Crear variables a partir de otra, por ejemplo, categorizar la edad.
+
+BaseF$x_2 <- ifelse (BaseF$x_2 <= 28, 1,
+             ifelse (BaseF$x_2 <= 40, 2,
+             ifelse (BaseF$x_2 <= 60, 3, 4)))
+
+BaseF$x_2 <- as.factor(BaseF$x_2) # Convierto la variable categórica, pasamos de cuanti a cuali
+
+# str(BaseF$x_2)
+
+# Para la variable x6, jefe de hogar. En la base de datos 1: SI y 2: NO, cuando se realizan modelos de clasificación o de IA, se recomienda que las variables sean de corte 1 y 0.
+
+BaseF$x_6 <- ifelse(BaseF$x_6 == 1, 1, 0)
+BaseF$x_6 <- as.factor(BaseF$x_6)
+
+# Para la variable x_5, estrato se crearan solo 3 grupos
+
+BaseF$x_5 <- ifelse(BaseF$x_5 == 1, 1, 
+             ifelse(BaseF$x_5 == 2, 1, 
+             ifelse(BaseF$x_5 == 3, 2, 
+             ifelse(BaseF$x_5 == 4, 2, 
+             ifelse(BaseF$x_5 == 5, 3, 3)))))
+
+BaseF$x_5 <- as.factor(BaseF$x_5)
+
+# Para la variable x1, Sexo, en la base 1: Hombre y 2: Mujer, y se transformará en 1: Hombre y 0: Mujer
+
+BaseF$x_1 <- ifelse(BaseF$x_1 == 1, 1, 0)
+BaseF$x_1 <- as.factor(BaseF$x_1)
+
+# Para la variable Y, el 3 indica que la persona ya está pensioanda, por ende para el estudio se deben eliminar dichos individuos
+
+BaseF <- filter(BaseF, y != 3) # Elimina los 3 de variable y de la base
+BaseF$y <- ifelse(BaseF$y == 2, 1, 0) # 1: Cotización
+                                      # 0: No cotiza
+BaseF$y <- as.factor(BaseF$y)
+
+# Para la variable x_3, Nivel Educativo, eliminar los NoSabe/NoResponde
+
+BaseF <- filter(BaseF, x_3 != 9)
+BaseF$x_3 <- ifelse(BaseF$x_3 == 1, 1,  # Sin estudios
+         ifelse(BaseF$x_3 == 2, 2,  # Primaria
+         ifelse(BaseF$x_3 == 3, 3,  # Secundaria
+         ifelse(BaseF$x_3 == 4, 4,  # Técnico
+         ifelse(BaseF$x_3 == 5, 5, 5))))) # Profesional
+
+BaseF$x_3 <- as.factor(BaseF$x_3)
+
+```
+
+# Modelos de clasificación
+
+```{r}
+
+# Se debe revisar el comportamiento de la variable y (Respuesta), en este caso es si la variable está balanceada o no
+
+table(BaseF$y) # Para este caso dado que la base se encuentra balanceada no se hará ninguna técnica para corregir dicho problema. En caso que se requiera balancear se realizará el siguiente codigo
+
+# BaseF1 <- BaseF %>%
+#           group_by(y) %>%
+#           sample(min(table(BaseF$y))) %>%
+#           ungroup()
+#           table(BaseF1$y)
+
+# Si por ejemplo en la variable Y, la categoria 1 tiene 20000 valores y la categoría 2 tiene 2000 valores. La función sample, selecciona una muestra aleatoria de tamaño 2000 de la categoría 1, con eso la nueva base tendrá 2000 valores en cada categoría
+```
+
+## Generacion de Bases de Entrenamiento y Prueba
+
+```{r}
+
+require(caret)
+BaseEntrenamiento <- createDataPartition(y = BaseF$y, # Si se balancea en el paso anterior se usa la base F1
+                                         p = 0.7,
+                                         list = FALSE)
+
+Entrenamiento <- BaseF[BaseEntrenamiento, ]
+Test <- BaseF[-BaseEntrenamiento, ]
+dim(Entrenamiento) ; dim(Test)
+
+```
+
+Apartir del entrenamiento se genera el modelo LOGIT para clasificar los individuos en la variable $y$.
+
+```{r}
+
+modelo.logit <- glm(y ~ . , data = Entrenamiento, family = "binomial")
+summary(modelo.logit)
+
+```
+
+```{r}
+
+EntrenamientoF <- predict(modelo.logit, newdata = Test, type = "response")
+head(EntrenamientoF)
+
+```
+
+# Tabla de Prediccion
+
+```{r}
+
+y1 <- factor(ifelse(EntrenamientoF > 0.7, 1, 0)) # Primer parametro, probabilidad de eleccion, este ya esta establecido en el lugar de trabajo
+levels(y1) <- c("Si", "No")
+levels(Test$y) <- c("Si", "No")
+table(Prediccion = y1, Realidad = Test$y)
+
+```
+
+```{r}
+
+conf_matrix <- confusionMatrix(y1, Test$y)
+conf_matrix
+
+```
+
